@@ -1,0 +1,11 @@
+# private settings and API keys
+.env
+# everything the app makes for you (your reviews and manuscripts stay on this computer)
+Outputs/
+# your own edited journal catalogue
+academic_writing/journal_catalogue.json
+# Python / OS clutter
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

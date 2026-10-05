@@ -1,0 +1,28 @@
+# AI Agent for Academic — Literature Review Agent + Academic Writing & Publication Agent in one app
+# Based on the Codanics "Top five AI agents for research" kit (agents 02 and 04).
+#
+#   python3 -m venv .venv
+#   source .venv/bin/activate        (Windows: .\.venv\Scripts\Activate.ps1)
+#   pip install -r requirements.txt
+
+# --- LLM + structured outputs ---
+anthropic
+pydantic>=2.7
+python-dotenv
+
+# --- research search tools (free public APIs) ---
+requests
+arxiv
+
+# --- CLI / console ---
+typer
+rich
+python-slugify
+
+# --- web app ---
+streamlit
+pandas
+
+# --- documents (PDF/Word upload, Word export) ---
+pypdf
+python-docx
