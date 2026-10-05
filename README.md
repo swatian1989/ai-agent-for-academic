@@ -33,7 +33,24 @@ bash setup_venv.sh                       # Windows: .\setup_venv.ps1
 .venv/bin/python -m streamlit run app.py # Windows: .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Needs Python 3.10 or newer and an Anthropic API key.
+Needs Python 3.10 or newer and one API key: Claude (paid) or a free Google Gemini / OpenRouter key.
+
+## Free AI options (no payment)
+
+The agents were built for **Claude** (paid per use, best quality). In **⚙️ Settings → AI provider** you
+can switch to a free online model instead — nothing to install, works on your computer and online:
+
+| Provider | Key | Free limits | Keep in mind |
+|---|---|---|---|
+| **Claude** (Anthropic) | [console.anthropic.com](https://console.anthropic.com/settings/keys) — paid credit | pay per use | best quality; data not used for training |
+| **Google Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — free, no card | daily limits set by Google | on the free tier Google may use what you send to improve its products |
+| **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/keys) — free | free models (`…:free`): about 50 requests/day (~3 full runs) | press “Load available models”; some free models log prompts |
+
+Free models follow the same rules (cite only retrieved papers, PRISMA by code, `[TO BE ADDED BY AUTHORS]`).
+Because they cannot guarantee structured output like Claude, the app asks them for JSON, checks it, and
+asks once more to repair it if needed. Expect weaker writing than Claude, and do not send unpublished or
+patient-related text to a free tier. Groq's free tier was left out: its 8,000-tokens-per-minute limit is
+too small for writing a review.
 
 ## Put it online (Streamlit Community Cloud, free)
 
@@ -128,7 +145,10 @@ ai agent for academic/
 
 | Variable | Meaning |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | required |
+| `AI_PROVIDER` | `anthropic` (default), `gemini` or `openrouter` |
+| `ANTHROPIC_API_KEY` | for Claude |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | for free Google Gemini (default model `gemini-3.8-flash`) |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | for free OpenRouter models |
 | `CLAUDE_MODEL` | `claude-opus-5-5` (default, best quality) or `claude-sonnet-5-5` (about half the price) |
 | `CLAUDE_BULK_MODEL` | optional cheaper model just for screening and extraction (many small calls) |
 | `SEMANTIC_SCHOLAR_API_KEY` | recommended — anonymous Semantic Scholar access is often rate-limited |

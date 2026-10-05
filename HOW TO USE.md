@@ -7,10 +7,15 @@
    - If the Mac says the file "cannot be opened", right-click it, choose **Open**, then **Open** again.
 2. Your web browser opens the app. **Keep the black window open while you work.** Closing it stops the app.
 
-## One-time setting: your API key
+## One-time setting: choose the AI and paste its key
 
-1. In the app, open **⚙️ Settings** in the left sidebar.
-2. Paste your Anthropic API key (from console.anthropic.com → API keys) and press **Save settings**.
+1. In the app, open **⚙️ Settings** in the left sidebar and choose the **AI provider**:
+   - **Claude** — paid (pay-as-you-go), best quality. Key from console.anthropic.com → API keys.
+   - **Google Gemini — FREE.** Key from aistudio.google.com/apikey (sign in with Google, no card).
+     On the free tier Google may use what you send, so do not use it for unpublished results or patient data.
+   - **OpenRouter — FREE models.** Key from openrouter.ai/keys; press **Load available models** and pick one.
+     About 50 requests a day (roughly three full runs).
+2. Paste the key and press **Save settings**.
 3. Optional: add your email for PubMed, and a free Semantic Scholar key (it avoids "too many requests" errors).
 
 ## A literature review

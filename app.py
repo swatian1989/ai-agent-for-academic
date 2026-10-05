@@ -153,7 +153,7 @@ class LiveText:
 def run_step(label: str, fn, *, needs_key: bool = True, stream: bool = False) -> bool:
     """Run one pipeline stage inside a live status box. `fn(log, live)`; returns True on success."""
     if needs_key and not llm.has_api_key():
-        st.error("Add your Anthropic API key in ⚙️ Settings (left sidebar) first.")
+        st.error(f"Add your {llm.PROVIDERS[llm.provider()]['short']} API key in ⚙️ Settings (left sidebar) first.")
         return False
     with st.status(f"{label} …", expanded=True) as box:
         live = LiveText(box) if stream else None
@@ -204,35 +204,62 @@ def mode_switch(key: str, options: list[str]) -> str:
 
 
 # =============================================================================== sidebar
+def _choose_provider() -> None:
+    """Called when the AI provider is changed in Settings."""
+    if HOSTED:
+        ss.user_provider = ss.provider_select
+    else:
+        save_env({"AI_PROVIDER": ss.provider_select})
+
+
+KEY_HINTS = {"anthropic": "sk-ant-…", "gemini": "AIza…", "openrouter": "sk-or-…"}
+
+
 def sidebar() -> None:
     with st.sidebar:
         st.markdown("## 🎓 AI Agent for Academic")
         st.caption("Literature Review Agent + Academic Writing & Publication Agent")
+        p = llm.provider()
+        cfg = llm.PROVIDERS[p]
         key_ok = llm.has_api_key()
-        if ss.get("user_api_key"):
+        cur = llm.model_for()
+        st.markdown(f"**AI:** {cfg['label']}")
+        st.markdown(f"**Model:** {llm.MODEL_CHOICES.get(cur, cur).split(' — ')[0] if cur else '— choose one in Settings'}")
+        if (ss.get("user_keys") or {}).get(p):
             st.markdown("**API key:** ✅ your own (this session only)")
         elif key_ok:
             st.markdown("**API key:** ✅ provided by the app owner" if HOSTED else "**API key:** ✅ saved")
         else:
             st.markdown("**API key:** ❌ not set yet")
-        st.markdown(f"**Model:** {llm.MODEL_CHOICES.get(llm.model_for(), llm.model_for()).split(' — ')[0]}")
         with st.expander("⚙️ Settings", expanded=not key_ok):
+            provs = list(llm.PROVIDERS)
+            st.selectbox("AI provider", provs, index=provs.index(p), key="provider_select",
+                         format_func=lambda x: llm.PROVIDERS[x]["label"], on_change=_choose_provider)
+            st.caption(f"{cfg['note']} [Get a key here]({cfg['get_key']}).")
+            opts_key = f"model_options_{p}"
+            if p != "anthropic" and st.button("🔄 Load available models", width="stretch",
+                                              disabled=not key_ok and p != "openrouter"):
+                try:
+                    ss[opts_key] = llm.list_models(p)
+                    st.toast(f"{len(ss[opts_key])} models found.")
+                except Exception as exc:
+                    st.warning(llm.friendly_error(exc))
             with st.form("settings"):
-                key = st.text_input("Anthropic API key", type="password", placeholder="sk-ant-…",
-                                    help=("Create one at console.anthropic.com → API keys. Online it is kept only "
-                                          "for this browser session and never saved." if HOSTED else
-                                          "Create one at console.anthropic.com → API keys. It is stored only in "
-                                          "this folder's private .env file.") + " Leave empty to keep the current key.")
-                models = list(llm.MODEL_CHOICES)
-                cur = llm.model_for()
-                model = st.selectbox("Model for writing & critique", models,
-                                     index=models.index(cur) if cur in models else 0,
-                                     format_func=llm.MODEL_CHOICES.get)
-                bulk_opts = ["same"] + models
-                cur_bulk = llm.model_for("bulk") if llm.model_for("bulk") != cur else "same"
-                bulk = st.selectbox("Model for screening & extraction (many small calls)", bulk_opts,
-                                    index=bulk_opts.index(cur_bulk) if cur_bulk in bulk_opts else 0,
-                                    format_func=lambda m: "Same as above" if m == "same" else llm.MODEL_CHOICES[m])
+                key = st.text_input(f"{cfg['short']} API key", type="password", placeholder=KEY_HINTS.get(p, ""),
+                                    help=("Online it is kept only for this browser session and never saved."
+                                          if HOSTED else "Stored only in this folder's private .env file.")
+                                         + " Leave empty to keep the current key.")
+                options = list(dict.fromkeys(([cur] if cur else []) + ss.get(opts_key, []) + cfg["models"]))
+                model = st.selectbox("Model", options, index=0 if options else None, accept_new_options=True,
+                                     format_func=lambda m: llm.MODEL_CHOICES.get(m, m),
+                                     help="You can also type a model name.")
+                bulk = "same"
+                if p == "anthropic":
+                    bulk_opts = ["same"] + list(llm.MODEL_CHOICES)
+                    cur_bulk = llm.model_for("bulk") if llm.model_for("bulk") != cur else "same"
+                    bulk = st.selectbox("Model for screening & extraction (many small calls)", bulk_opts,
+                                        index=bulk_opts.index(cur_bulk) if cur_bulk in bulk_opts else 0,
+                                        format_func=lambda m: "Same as above" if m == "same" else llm.MODEL_CHOICES[m])
                 if not HOSTED:  # online, the owner sets these in the app's secrets
                     s2 = st.text_input("Semantic Scholar API key (optional, avoids rate limits)", type="password",
                                        value=os.getenv("SEMANTIC_SCHOLAR_API_KEY", ""))
@@ -242,13 +269,17 @@ def sidebar() -> None:
                     bulk_model = "" if bulk == "same" else bulk
                     if HOSTED:  # this browser session only — never written to the shared disk
                         if key.strip():
-                            ss.user_api_key = key.strip()
-                        ss.user_model, ss.user_bulk_model = model, bulk_model
+                            ss.user_keys = {**(ss.get("user_keys") or {}), p: key.strip()}
+                        ss.user_models = {**(ss.get("user_models") or {}), p: model or ""}
+                        if p == "anthropic":
+                            ss.user_bulk_model = bulk_model
                     else:
-                        updates = {"CLAUDE_MODEL": model, "CLAUDE_BULK_MODEL": bulk_model,
-                                   "SEMANTIC_SCHOLAR_API_KEY": s2.strip(), "NCBI_EMAIL": email.strip()}
+                        updates = {cfg["model_env"]: model or "", "SEMANTIC_SCHOLAR_API_KEY": s2.strip(),
+                                   "NCBI_EMAIL": email.strip()}
+                        if p == "anthropic":
+                            updates["CLAUDE_BULK_MODEL"] = bulk_model
                         if key.strip():
-                            updates["ANTHROPIC_API_KEY"] = key.strip()
+                            updates[cfg["key_env"]] = key.strip()
                         save_env(updates)
                     st.rerun()
         st.divider()
@@ -288,7 +319,8 @@ def home_tab() -> None:
             "5. **Revised manuscript** — with every change in **bold**")
     st.markdown("#### How to start")
     st.markdown(
-        "1. Open **⚙️ Settings** in the left sidebar and paste your Anthropic API key (once only).\n"
+        "1. Open **⚙️ Settings** in the left sidebar, choose the AI — **Claude** (paid, best quality) or a "
+        "**free** one (**Google Gemini** or **OpenRouter**) — and paste its key (once only).\n"
         "2. Go to the **📚 Literature Review** tab, type your question and press *Create review*.\n"
         "3. When the review is done, press **“Use these papers in the Writing Agent”**, then open the "
         "**✍️ Academic Writing** tab, add your study notes and results, and press *Create project*.\n"
@@ -301,7 +333,7 @@ def home_tab() -> None:
         "every manuscript.")
     st.warning(
         "**Please check before you use anything.** These are drafts. Verify every citation, number and claim "
-        "against the original papers. Text you enter is sent to Anthropic's API to generate the drafts — do not "
+        "against the original papers. Text you enter is sent to the AI provider you chose (Anthropic, Google or OpenRouter) — do not "
         "paste patient names, IC numbers or other identifiable patient information.")
     st.caption("Based on the open-source “Top five AI agents for research” kit by Codanics "
                "(github.com/AammarTufail/top_five_ai_agents_for_research), agents 02 and 04.")
@@ -818,7 +850,8 @@ def files_tab() -> None:
 
 # =============================================================================== main
 password_gate()
-llm.use_session(api_key=ss.get("user_api_key"), model=ss.get("user_model"), bulk_model=ss.get("user_bulk_model"))
+llm.use_session(provider=ss.get("user_provider"), keys=ss.get("user_keys"), models=ss.get("user_models"),
+                bulk_model=ss.get("user_bulk_model"))
 sidebar()
 tabs = st.tabs(["🏠 Start here", "📚 Literature Review", "✍️ Academic Writing", "📁 My files"])
 with tabs[0]:

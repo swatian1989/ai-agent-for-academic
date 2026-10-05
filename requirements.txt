@@ -7,6 +7,7 @@
 
 # --- LLM + structured outputs ---
 anthropic>=1.11
+openai>=1.60          # only for the free providers (Google Gemini, OpenRouter)
 pydantic>=2.7
 python-dotenv
 
