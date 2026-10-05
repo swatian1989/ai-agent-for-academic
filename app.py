@@ -6,15 +6,21 @@ app.py — AI Agent for Academic: two research agents in one web app.
     🔗 Bridge                             papers included in a review become the writer's reference list
 
 Run:  streamlit run app.py      (or double-click "Start AI Agent.command" on a Mac)
+Online: deploy app.py on Streamlit Community Cloud with the secrets in .streamlit/secrets.toml.example
 
 Adapted from the Codanics "Top five AI agents for research" kit (agents 02 and 04).
 """
 from __future__ import annotations
 
+import hmac
+import io
 import os
+import re
 import subprocess
 import sys
 import time
+import uuid
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -34,12 +40,35 @@ from literature_review.agents import Protocol  # noqa: E402
 
 st.set_page_config(page_title="AI Agent for Academic", page_icon="🎓", layout="wide")
 
-OUTPUTS = APP_DIR / "Outputs"
+try:  # loading Streamlit secrets also exports the root-level ones as environment variables
+    len(st.secrets)
+except Exception:  # no secrets file: running on your own computer
+    pass
+# Hosted = running on Streamlit Community Cloud (or any shared server): one disk shared by every visitor,
+# wiped on restart. Then keys stay in the browser session, never on disk, and each visitor gets a workspace.
+HOSTED = os.getenv("AI_AGENT_CLOUD") == "1" or str(APP_DIR).startswith("/mount/src")
+ss = st.session_state
+
+
+def workspace() -> Path:
+    """Your own computer: ./Outputs. Hosted: a private workspace whose id lives in the page address
+    (?ws=…), so a bookmark brings you back to your files while the server keeps running."""
+    if not HOSTED:
+        return APP_DIR / "Outputs"
+    ws = st.query_params.get("ws", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{12,40}", ws or ""):
+        ws = ss.setdefault("workspace_id", uuid.uuid4().hex)
+        st.query_params["ws"] = ws
+    return APP_DIR / "Outputs" / "workspaces" / ws
+
+
+OUTPUTS = workspace()
+REVIEWS = OUTPUTS / "Literature reviews"
+PROJECTS = OUTPUTS / "Manuscripts"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 SOURCE_LABELS = {"arxiv": "arXiv", "semantic_scholar": "Semantic Scholar", "pubmed": "PubMed",
                  "crossref": "Crossref"}
 SAMPLE_NOTES = (APP_DIR / "academic_writing" / "sample_notes.md").read_text(encoding="utf-8")
-ss = st.session_state
 
 
 # =============================================================================== helpers
@@ -73,6 +102,34 @@ def open_folder(path: Path) -> None:
         os.startfile(str(path))  # type: ignore[attr-defined]
     else:
         subprocess.run(["xdg-open", str(path)], check=False)
+
+
+def zip_folder(folder: Path) -> bytes:
+    """Everything in one project folder as a ZIP (Word copies included)."""
+    for md in folder.glob("*.md"):
+        ensure_docx(md)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(folder.iterdir()):
+            if f.is_file():
+                z.write(f, arcname=f"{folder.name}/{f.name}")
+    return buf.getvalue()
+
+
+def password_gate() -> None:
+    """If the owner set APP_PASSWORD (in secrets or .env), ask for it once per browser session."""
+    pw = os.getenv("APP_PASSWORD", "")
+    if not pw or ss.get("authed"):
+        return
+    st.title("🎓 AI Agent for Academic")
+    with st.form("login"):
+        entered = st.text_input("Password", type="password")
+        if st.form_submit_button("Enter", type="primary"):
+            if hmac.compare_digest(entered.encode(), pw.encode()):
+                ss.authed = True
+                st.rerun()
+            st.error("Wrong password.")
+    st.stop()
 
 
 class LiveText:
@@ -152,39 +209,58 @@ def sidebar() -> None:
         st.markdown("## 🎓 AI Agent for Academic")
         st.caption("Literature Review Agent + Academic Writing & Publication Agent")
         key_ok = llm.has_api_key()
-        st.markdown("**API key:** ✅ saved" if key_ok else "**API key:** ❌ not set yet")
+        if ss.get("user_api_key"):
+            st.markdown("**API key:** ✅ your own (this session only)")
+        elif key_ok:
+            st.markdown("**API key:** ✅ provided by the app owner" if HOSTED else "**API key:** ✅ saved")
+        else:
+            st.markdown("**API key:** ❌ not set yet")
         st.markdown(f"**Model:** {llm.MODEL_CHOICES.get(llm.model_for(), llm.model_for()).split(' — ')[0]}")
         with st.expander("⚙️ Settings", expanded=not key_ok):
             with st.form("settings"):
                 key = st.text_input("Anthropic API key", type="password", placeholder="sk-ant-…",
-                                    help="Create one at console.anthropic.com → API keys. It is stored only in "
-                                         "this folder's private .env file. Leave empty to keep the saved key.")
+                                    help=("Create one at console.anthropic.com → API keys. Online it is kept only "
+                                          "for this browser session and never saved." if HOSTED else
+                                          "Create one at console.anthropic.com → API keys. It is stored only in "
+                                          "this folder's private .env file.") + " Leave empty to keep the current key.")
                 models = list(llm.MODEL_CHOICES)
                 cur = llm.model_for()
                 model = st.selectbox("Model for writing & critique", models,
                                      index=models.index(cur) if cur in models else 0,
                                      format_func=llm.MODEL_CHOICES.get)
                 bulk_opts = ["same"] + models
-                cur_bulk = os.getenv("CLAUDE_BULK_MODEL") or "same"
+                cur_bulk = llm.model_for("bulk") if llm.model_for("bulk") != cur else "same"
                 bulk = st.selectbox("Model for screening & extraction (many small calls)", bulk_opts,
                                     index=bulk_opts.index(cur_bulk) if cur_bulk in bulk_opts else 0,
                                     format_func=lambda m: "Same as above" if m == "same" else llm.MODEL_CHOICES[m])
-                s2 = st.text_input("Semantic Scholar API key (optional, avoids rate limits)", type="password",
-                                   value=os.getenv("SEMANTIC_SCHOLAR_API_KEY", ""))
-                email = st.text_input("Your email for PubMed (NCBI asks for one)", value=os.getenv("NCBI_EMAIL", ""))
+                if not HOSTED:  # online, the owner sets these in the app's secrets
+                    s2 = st.text_input("Semantic Scholar API key (optional, avoids rate limits)", type="password",
+                                       value=os.getenv("SEMANTIC_SCHOLAR_API_KEY", ""))
+                    email = st.text_input("Your email for PubMed (NCBI asks for one)",
+                                          value=os.getenv("NCBI_EMAIL", ""))
                 if st.form_submit_button("Save settings", type="primary"):
-                    updates = {"CLAUDE_MODEL": model, "CLAUDE_BULK_MODEL": "" if bulk == "same" else bulk,
-                               "SEMANTIC_SCHOLAR_API_KEY": s2.strip(), "NCBI_EMAIL": email.strip()}
-                    if key.strip():
-                        updates["ANTHROPIC_API_KEY"] = key.strip()
-                    save_env(updates)
-                    st.success("Saved.")
+                    bulk_model = "" if bulk == "same" else bulk
+                    if HOSTED:  # this browser session only — never written to the shared disk
+                        if key.strip():
+                            ss.user_api_key = key.strip()
+                        ss.user_model, ss.user_bulk_model = model, bulk_model
+                    else:
+                        updates = {"CLAUDE_MODEL": model, "CLAUDE_BULK_MODEL": bulk_model,
+                                   "SEMANTIC_SCHOLAR_API_KEY": s2.strip(), "NCBI_EMAIL": email.strip()}
+                        if key.strip():
+                            updates["ANTHROPIC_API_KEY"] = key.strip()
+                        save_env(updates)
                     st.rerun()
         st.divider()
-        st.markdown("**Everything you make is saved in**")
-        st.code(str(OUTPUTS), language=None)
-        if st.button("📂 Open the Outputs folder", width="stretch"):
-            open_folder(OUTPUTS)
+        if HOSTED:
+            st.markdown("**Your files are in temporary online storage**")
+            st.caption("They are deleted when the app restarts or sleeps. Download the Word files, or a ZIP "
+                       "from 📁 My files, before you leave. Bookmark this page to come back to your workspace.")
+        else:
+            st.markdown("**Everything you make is saved in**")
+            st.code(str(OUTPUTS), language=None)
+            if st.button("📂 Open the Outputs folder", width="stretch"):
+                open_folder(OUTPUTS)
 
 
 # =============================================================================== home
@@ -216,7 +292,8 @@ def home_tab() -> None:
         "2. Go to the **📚 Literature Review** tab, type your question and press *Create review*.\n"
         "3. When the review is done, press **“Use these papers in the Writing Agent”**, then open the "
         "**✍️ Academic Writing** tab, add your study notes and results, and press *Create project*.\n"
-        "4. Every result is saved automatically (Word + Markdown) in the **Outputs** folder.")
+        + ("4. Download each result as Word (online storage is temporary)." if HOSTED else
+           "4. Every result is saved automatically (Word + Markdown) in the **Outputs** folder."))
     st.info(
         "**Rules these agents follow** — numbers in the PRISMA flow are counted by code, not by the AI · "
         "the AI may only cite papers that the database search actually returned · missing facts are written "
@@ -234,7 +311,7 @@ def home_tab() -> None:
 def literature_tab() -> None:
     st.header("📚 Literature Review Agent")
     st.caption("“Autonomous Systematic Review Scientist” — PRISMA-style search → screen → extract → write")
-    reviews = lr.list_reviews()
+    reviews = lr.list_reviews(REVIEWS)
     choice = mode_switch("lr_mode", ["➕ New review", "📂 Open a saved review"])
 
     if choice.startswith("➕"):
@@ -255,7 +332,7 @@ def literature_tab() -> None:
                 elif not sources and not offline:
                     st.error("Choose at least one database.")
                 else:
-                    out = lr.new_review_dir(question.strip())
+                    out = lr.new_review_dir(question.strip(), REVIEWS)
                     lr.save_settings(out, question.strip(), int(max_records), sources, offline)
                     ss.lr_dir, ss.lr_mode_next = str(out), "📂 Open a saved review"
                     ss.lr_autorun = how.startswith("All")
@@ -459,7 +536,7 @@ def writing_tab() -> None:
     if choice.startswith("➕"):
         new_project_form()
     else:
-        projects = aw.list_projects()
+        projects = aw.list_projects(PROJECTS)
         if not projects:
             st.info("No saved projects yet — choose “New manuscript project”.")
         else:
@@ -477,7 +554,7 @@ def new_project_form() -> None:
     st.button("📝 Load the example notes (wheat drought study from the original kit)",
               on_click=lambda: ss.update(aw_notes=SAMPLE_NOTES, aw_project="Example — drought wheat",
                                          aw_field="plant science"))
-    reviews = bridge.usable_reviews()
+    reviews = bridge.usable_reviews(REVIEWS)
     review_opts = [""] + [str(p) for p in reviews]
     pre = ss.get("aw_import_review", "")
     with st.form("aw_new"):
@@ -518,7 +595,7 @@ def new_project_form() -> None:
         background = bridge.background_from_review(Path(src)) if use_bg else ""
     mode = "manuscript" if what.startswith("A finished") else "notes"
     name = project.strip() or (upload.name.rsplit(".", 1)[0] if upload else text.splitlines()[0][:60])
-    out = aw.new_project_dir(name)
+    out = aw.new_project_dir(name, PROJECTS)
     aw.save_inputs(out, project=name, field=(field or "").strip() or "medicine", reviewers=reviewers, mode=mode,
                    notes=text if mode == "notes" else "", manuscript=text if mode == "manuscript" else "",
                    references=ref_text, background=background, source_review=src or None)
@@ -661,14 +738,17 @@ def journal_catalogue_editor() -> None:
                    "considering (one row each) and press Save. Fees and impact bands are indicative.")
         cat = pd.DataFrame([j.model_dump() for j in jr.load_catalogue()])
         cat["fields"] = cat["fields"].apply(lambda v: ", ".join(v))
-        edited = st.data_editor(cat, num_rows="dynamic", hide_index=True, width="stretch",
+        if HOSTED:
+            st.caption("Online, the catalogue is read-only (it is shared by everyone). Edit it in the copy on your "
+                       "own computer, or in `academic_writing/journals.py` on GitHub.")
+        edited = st.data_editor(cat, num_rows="dynamic", hide_index=True, width="stretch", disabled=HOSTED,
                                 key=f"jr_cat_{ss.get('edit_v', 0)}",
                                 column_config={"impact_band": st.column_config.SelectboxColumn(
                                     options=["very high", "high", "medium", "emerging"]),
                                     "open_access": st.column_config.SelectboxColumn(
                                     options=["gold", "hybrid", "subscription", "diamond"])})
         c1, c2, c3 = st.columns(3)
-        if c1.button("💾 Save catalogue", width="stretch"):
+        if c1.button("💾 Save catalogue", width="stretch", disabled=HOSTED):
             def txt(v) -> str:
                 return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip()
 
@@ -690,7 +770,7 @@ def journal_catalogue_editor() -> None:
                 st.rerun()
             except ValueError as exc:
                 st.error(f"Could not save — please check the numbers: {exc}")
-        if c2.button("↩️ Reset to the built-in list", width="stretch"):
+        if c2.button("↩️ Reset to the built-in list", width="stretch", disabled=HOSTED):
             jr.reset_catalogue()
             ss.edit_v = ss.get("edit_v", 0) + 1
             st.rerun()
@@ -713,25 +793,32 @@ def journal_catalogue_editor() -> None:
 # =============================================================================== files
 def files_tab() -> None:
     st.header("📁 My files")
-    st.caption(f"Everything is saved in {OUTPUTS}")
-    if st.button("📂 Open the Outputs folder", key="files_open"):
-        open_folder(OUTPUTS)
+    if HOSTED:
+        st.warning("Online storage is temporary: download a ZIP of anything you want to keep.")
+    else:
+        st.caption(f"Everything is saved in {OUTPUTS}")
+        if st.button("📂 Open the Outputs folder", key="files_open"):
+            open_folder(OUTPUTS)
     for title, items, label in (
-            ("📚 Literature reviews", lr.list_reviews(), lambda d: lr.load_settings(d)["question"]),
-            ("✍️ Manuscript projects", aw.list_projects(), lambda d: aw.load_inputs(d)["project"])):
+            ("📚 Literature reviews", lr.list_reviews(REVIEWS), lambda d: lr.load_settings(d)["question"]),
+            ("✍️ Manuscript projects", aw.list_projects(PROJECTS), lambda d: aw.load_inputs(d)["project"])):
         st.subheader(title)
         if not items:
             st.caption("Nothing yet.")
         for d in items:
             files = sorted(f.name for f in d.iterdir() if f.is_file())
             with st.expander(f"{label(d)}  ·  {time.strftime('%d %b %Y %H:%M', time.localtime(d.stat().st_mtime))}"):
-                st.caption(str(d))
                 st.markdown(" · ".join(f"`{f}`" for f in files))
-                if st.button("Open this folder", key=f"open_{d}"):
+                c1, c2 = st.columns(2)
+                c1.download_button("⬇ Download everything (ZIP)", zip_folder(d), f"{d.name}.zip", "application/zip",
+                                   key=f"zip_{d}", width="stretch")
+                if not HOSTED and c2.button("📂 Open this folder", key=f"open_{d}", width="stretch"):
                     open_folder(d)
 
 
 # =============================================================================== main
+password_gate()
+llm.use_session(api_key=ss.get("user_api_key"), model=ss.get("user_model"), bulk_model=ss.get("user_bulk_model"))
 sidebar()
 tabs = st.tabs(["🏠 Start here", "📚 Literature Review", "✍️ Academic Writing", "📁 My files"])
 with tabs[0]:

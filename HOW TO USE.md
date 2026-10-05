@@ -52,3 +52,13 @@ The **📁 My files** tab lists them all, and **Open the Outputs folder** opens 
 - Missing facts appear as **[TO BE ADDED BY AUTHORS]**. Fill these in yourself.
 - Do **not** enter patient names, IC numbers or other identifiable patient information.
 - Do not share the hidden `.env` file: it contains your API key.
+
+## Using the online version
+
+The online app works the same way, with three differences:
+
+- If you are asked for a **password**, it is the one set by the app owner.
+- If the sidebar says **API key: ❌**, paste your own key in **⚙️ Settings**. It is used only while
+  this browser tab is open and is never saved.
+- **Files online are temporary.** Download each result as Word, or download a ZIP from **📁 My files**,
+  before you leave. Bookmark the page to come back to your workspace while the app is running.

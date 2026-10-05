@@ -8,7 +8,8 @@ Two functions are all the agents need:
 Why a wrapper?  Both agents talk to the model the same way.  Keeping the API details in one
 file means you can swap the model or provider in one place.
 
-Settings come from the `.env` file next to this file (see `.env.example`):
+Settings come from the `.env` file next to this file (see `.env.example`), from Streamlit secrets
+when hosted on Streamlit Community Cloud, or — for one browser session only — from `use_session()`:
     ANTHROPIC_API_KEY   your key from https://console.anthropic.com/
     CLAUDE_MODEL        model for writing and critique   (default claude-opus-5-5)
     CLAUDE_BULK_MODEL   optional cheaper model for bulk screening/extraction (default = CLAUDE_MODEL)
@@ -17,6 +18,7 @@ Adapted from the Codanics "Top five AI agents for research" kit (agents 02 and 0
 """
 from __future__ import annotations
 
+import contextvars
 import os
 from pathlib import Path
 from typing import Callable, Type, TypeVar
@@ -41,18 +43,33 @@ _FALLBACK_BETA = "server-side-fallback-2026-07-01"
 T = TypeVar("T", bound=BaseModel)
 
 _client: anthropic.Anthropic | None = None
+_session_clients: dict[str, anthropic.Anthropic] = {}
+# Per-browser-session overrides (hosted app): set at the start of every script run by app.py.
+# A ContextVar keeps one visitor's key and model choice away from every other visitor.
+_session: contextvars.ContextVar[dict] = contextvars.ContextVar("llm_session", default={})
+
+
+def use_session(api_key: str | None = None, model: str | None = None, bulk_model: str | None = None) -> None:
+    """Use this API key / model for the current browser session only (never written to disk)."""
+    _session.set({k: v for k, v in {"api_key": api_key, "model": model, "bulk_model": bulk_model}.items() if v})
 
 
 def model_for(task: str = "writing") -> str:
-    """Model for a task. Read from the environment on every call so Settings changes apply at once."""
-    main = os.getenv("CLAUDE_MODEL") or DEFAULT_MODEL
+    """Model for a task. Read on every call so Settings changes apply at once."""
+    s = _session.get()
+    main = s.get("model") or os.getenv("CLAUDE_MODEL") or DEFAULT_MODEL
     if task == "bulk":
-        return os.getenv("CLAUDE_BULK_MODEL") or main
+        return s.get("bulk_model") or os.getenv("CLAUDE_BULK_MODEL") or main
     return main
 
 
 def client() -> anthropic.Anthropic:
-    """Lazily create one shared client (credentials come from the environment)."""
+    """The session's own key if one was given, else one shared client (credentials from the environment)."""
+    key = _session.get().get("api_key")
+    if key:
+        if key not in _session_clients:
+            _session_clients[key] = anthropic.Anthropic(api_key=key)
+        return _session_clients[key]
     global _client
     if _client is None:
         _client = anthropic.Anthropic()
@@ -66,7 +83,7 @@ def reset_client() -> None:
 
 
 def has_api_key() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+    return bool(_session.get().get("api_key") or os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
 
 
 def _request(model: str, system: str, user: str, max_tokens: int, effort: str) -> dict:

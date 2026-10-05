@@ -6,7 +6,7 @@
 #   pip install -r requirements.txt
 
 # --- LLM + structured outputs ---
-anthropic
+anthropic>=1.11
 pydantic>=2.7
 python-dotenv
 
@@ -20,7 +20,7 @@ rich
 python-slugify
 
 # --- web app ---
-streamlit
+streamlit>=1.50
 pandas
 
 # --- documents (PDF/Word upload, Word export) ---

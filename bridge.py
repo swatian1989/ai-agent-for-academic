@@ -14,9 +14,9 @@ from literature_review import workflow as lr
 from literature_review.tools import Paper
 
 
-def usable_reviews() -> list[Path]:
+def usable_reviews(base: Path = lr.REVIEWS_DIR) -> list[Path]:
     """Reviews that have at least finished screening (so there is an included set)."""
-    return [d for d in lr.list_reviews() if lr.status(d)["screening"]]
+    return [d for d in lr.list_reviews(base) if lr.status(d)["screening"]]
 
 
 def review_label(out: Path) -> str:

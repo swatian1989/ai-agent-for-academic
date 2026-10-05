@@ -35,6 +35,29 @@ bash setup_venv.sh                       # Windows: .\setup_venv.ps1
 
 Needs Python 3.10 or newer and an Anthropic API key.
 
+## Put it online (Streamlit Community Cloud, free)
+
+1. Open <https://share.streamlit.io/deploy?repository=swatian1989/ai-agent-for-academic&branch=main&mainModule=app.py>
+   and sign in with GitHub (allow access to private repositories when asked).
+2. Check: repository `swatian1989/ai-agent-for-academic`, branch `main`, main file `app.py`.
+3. **Advanced settings** → Python **3.12** → **Secrets**: paste the contents of
+   [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example) and fill in your values
+   (keep `AI_AGENT_CLOUD = "1"`). Then **Deploy**.
+4. Share it: because the GitHub repo is private, the app is private too — invite people by email with
+   the app's **Share** button (they sign in with Google or an emailed link). The free plan allows one
+   private app.
+
+What changes online (`AI_AGENT_CLOUD = "1"`):
+
+| | On your computer | Online |
+|---|---|---|
+| API key | saved in `.env` | from the app's secrets (your key), or each visitor's own key, kept only for their browser session |
+| Password | — | optional `APP_PASSWORD` asked once per session (recommended when using your key) |
+| Your files | `Outputs/` folder, permanent | a private workspace per visitor (`?ws=…` in the address), **deleted when the app restarts or sleeps** — download Word files or a ZIP |
+| Journal catalogue | editable | read-only (shared by everyone) |
+
+The app sleeps after about 12 hours without visitors; opening it wakes it up in under a minute.
+
 ## What each agent does
 
 ### 📚 Literature Review Agent — "Autonomous Systematic Review Scientist"
