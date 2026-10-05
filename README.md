@@ -142,4 +142,5 @@ streams long outputs, and opts in to Anthropic's server-side refusal fallback.
 Agent design, prompts and pipeline structure: **Codanics — “Top five AI agents for research”**
 (<https://github.com/AammarTufail/top_five_ai_agents_for_research>, course
 <https://codanics.com/courses/python-ka-chilla-build-ai-agents/>). That repository does not state a
-licence; this adaptation keeps the attribution in every file derived from it.
+licence; this adaptation keeps the attribution in every file derived from it. This repository is
+released under the MIT License (see `LICENSE`).
